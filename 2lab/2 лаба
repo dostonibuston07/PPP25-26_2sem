@@ -1,0 +1,1103 @@
+import math
+import itertools
+import functools
+from typing import Iterator, Tuple, List, Callable, Any
+import matplotlib.pyplot as plt
+ 
+Point = Tuple[float, float]
+Polygon = Tuple[Point, ...]
+ 
+def visualize_polygons(polygons: Iterator[Polygon], title: str = "Polygons", 
+                       colors: List = None, figsize: Tuple[int, int] = (12, 8),
+                       show_labels: bool = False):
+    polygons_list = list(polygons)
+    if not polygons_list:
+        print("Нет полигонов для визуализации")
+        return
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_title(title)
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    
+    for i, polygon in enumerate(polygons_list):
+        color = plt.cm.tab10(i % 10)
+        
+        closed_polygon = list(polygon) + [polygon[0]]
+        xs, ys = zip(*closed_polygon)
+        
+        ax.fill(xs, ys, alpha=0.4, fc=color, ec='black', linewidth=1.5)
+        
+        if show_labels:
+            center_x = sum(p[0] for p in polygon) / len(polygon)
+            center_y = sum(p[1] for p in polygon) / len(polygon)
+            ax.text(center_x, center_y, str(i+1), fontsize=10, ha='center', va='center')
+    
+    all_x = [p[0] for poly in polygons_list for p in poly]
+    all_y = [p[1] for poly in polygons_list for p in poly]
+    if all_x and all_y:
+        margin_x = (max(all_x) - min(all_x)) * 0.1 if max(all_x) != min(all_x) else 1
+        margin_y = (max(all_y) - min(all_y)) * 0.1 if max(all_y) != min(all_y) else 1
+        ax.set_xlim(min(all_x) - margin_x, max(all_x) + margin_x)
+        ax.set_ylim(min(all_y) - margin_y, max(all_y) + margin_y)
+    
+    plt.tight_layout()
+    plt.show()
+ 
+def gen_rectangle(start_x: float = 0, start_y: float = 0, 
+                  step_x: float = 2, step_y: float = 0,
+                  width: float = 1, height: float = 1) -> Iterator[Polygon]:
+    x, y = start_x, start_y
+    while True:
+        polygon = ((x, y), (x + width, y), (x + width, y + height), (x, y + height))
+        yield polygon
+        x += step_x
+        y += step_y
+ 
+def gen_triangle(start_x: float = 0, start_y: float = 0,
+                 step_x: float = 1.5, step_y: float = 0.5,
+                 side: float = 1) -> Iterator[Polygon]:
+    x, y = start_x, start_y
+    height = side * math.sqrt(3) / 2
+    while True:
+        polygon = ((x, y), (x + side, y), (x + side/2, y + height))
+        yield polygon
+        x += step_x
+        y += step_y
+ 
+def gen_hexagon(center_x: float = 0, center_y: float = 0,
+                step_x: float = 2.5, step_y: float = 0,
+                radius: float = 1) -> Iterator[Polygon]:
+    x, y = center_x, center_y
+    while True:
+        polygon = []
+        for i in range(6):
+            angle = math.pi / 3 * i
+            px = x + radius * math.cos(angle)
+            py = y + radius * math.sin(angle)
+            polygon.append((px, py))
+        yield tuple(polygon)
+        x += step_x
+        y += step_y
+ 
+def tr_translate(dx: float, dy: float) -> Callable[[Polygon], Polygon]:
+    def translate(polygon: Polygon) -> Polygon:
+        return tuple((x + dx, y + dy) for x, y in polygon)
+    return translate
+ 
+def tr_rotate(angle_deg: float, cx: float = 0, cy: float = 0) -> Callable[[Polygon], Polygon]:
+    angle_rad = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+    
+    def rotate(polygon: Polygon) -> Polygon:
+        def rotate_point(x: float, y: float) -> Tuple[float, float]:
+            x_rel, y_rel = x - cx, y - cy
+            x_new = x_rel * cos_a - y_rel * sin_a + cx
+            y_new = x_rel * sin_a + y_rel * cos_a + cy
+            return (x_new, y_new)
+        return tuple(rotate_point(x, y) for x, y in polygon)
+    return rotate
+ 
+def tr_symmetry(axis: str = 'x', line_point1: Point = (0, 0), line_point2: Point = (1, 0)) -> Callable[[Polygon], Polygon]:
+    if axis == 'x':
+        def symmetry(polygon: Polygon) -> Polygon:
+            return tuple((x, -y) for x, y in polygon)
+    elif axis == 'y':
+        def symmetry(polygon: Polygon) -> Polygon:
+            return tuple((-x, y) for x, y in polygon)
+    else:
+        x1, y1 = line_point1
+        x2, y2 = line_point2
+        dx, dy = x2 - x1, y2 - y1
+        length_sq = dx*dx + dy*dy
+        
+        def symmetry(polygon: Polygon) -> Polygon:
+            result = []
+            for x, y in polygon:
+                x_rel, y_rel = x - x1, y - y1
+                t = (x_rel*dx + y_rel*dy) / length_sq
+                x_proj = x1 + t*dx
+                y_proj = y1 + t*dy
+                x_sym = 2*x_proj - x
+                y_sym = 2*y_proj - y
+                result.append((x_sym, y_sym))
+            return tuple(result)
+    return symmetry
+ 
+def tr_homothety(k: float, cx: float = 0, cy: float = 0) -> Callable[[Polygon], Polygon]:
+    def homothety(polygon: Polygon) -> Polygon:
+        return tuple((cx + k*(x - cx), cy + k*(y - cy)) for x, y in polygon)
+    return homothety
+ 
+def flt_convex_polygon(polygon: Polygon) -> bool:
+    def cross(o: Point, a: Point, b: Point) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    
+    n = len(polygon)
+    if n < 3:
+        return False
+    
+    prev_sign = 0
+    for i in range(n):
+        o = polygon[i]
+        a = polygon[(i+1) % n]
+        b = polygon[(i+2) % n]
+        cr = cross(o, a, b)
+        sign = 1 if cr > 0 else (-1 if cr < 0 else 0)
+        
+        if sign != 0:
+            if prev_sign != 0 and sign != prev_sign:
+                return False
+            prev_sign = sign
+    return True
+ 
+def flt_angle_point(polygon: Polygon, point: Point, angle_threshold: float = 90) -> bool:
+    for i, p in enumerate(polygon):
+        prev = polygon[i-1]
+        next_p = polygon[(i+1) % len(polygon)]
+        
+        v1 = (prev[0] - p[0], prev[1] - p[1])
+        v2 = (next_p[0] - p[0], next_p[1] - p[1])
+        
+        dot = v1[0]*v2[0] + v1[1]*v2[1]
+        norm1 = math.sqrt(v1[0]**2 + v1[1]**2)
+        norm2 = math.sqrt(v2[0]**2 + v2[1]**2)
+        
+        if norm1 * norm2 == 0:
+            continue
+        
+        cos_angle = dot / (norm1 * norm2)
+        cos_angle = max(-1, min(1, cos_angle))
+        angle_rad = math.acos(cos_angle)
+        angle_deg = math.degrees(angle_rad)
+        
+        if abs(angle_deg - angle_threshold) < 1:
+            return True
+    return False
+ 
+def flt_square(polygon: Polygon, max_area: float) -> bool:
+    n = len(polygon)
+    area = 0
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        area += x1*y2 - x2*y1
+    area = abs(area) / 2
+    return area < max_area
+ 
+def flt_short_side(polygon: Polygon, max_length: float) -> bool:
+    min_side = float('inf')
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        side = math.sqrt((x2-x1)**2 + (y2-y1)**2)
+        min_side = min(min_side, side)
+    return min_side < max_length
+ 
+def flt_point_inside(polygon: Polygon, point: Point) -> bool:
+    x, y = point
+    n = len(polygon)
+    inside = False
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
+            inside = not inside
+    return inside
+ 
+def flt_polygon_angles_inside(polygon: Polygon, target_polygon: Polygon) -> bool:
+    for point in target_polygon:
+        if flt_point_inside(polygon, point):
+            return True
+    return False
+ 
+def flt_convex_polygon_decorator(func: Callable) -> Callable:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, Iterator):
+            return filter(flt_convex_polygon, result)
+        return result
+    return wrapper
+ 
+def flt_square_decorator(max_area: float):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return filter(lambda p: flt_square(p, max_area), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def tr_translate_decorator(dx: float, dy: float):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return map(tr_translate(dx, dy), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def tr_rotate_decorator(angle_deg: float, cx: float = 0, cy: float = 0):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return map(tr_rotate(angle_deg, cx, cy), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def polygon_area(polygon: Polygon) -> float:
+    n = len(polygon)
+    area = 0
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        area += x1*y2 - x2*y1
+    return abs(area) / 2
+ 
+def polygon_perimeter(polygon: Polygon) -> float:
+    perimeter = 0
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        perimeter += math.sqrt((x2-x1)**2 + (y2-y1)**2)
+    return perimeter
+ 
+def polygon_side_lengths(polygon: Polygon) -> List[float]:
+    lengths = []
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        lengths.append(math.sqrt((x2-x1)**2 + (y2-y1)**2))
+    return lengths
+ 
+def polygon_vertex_distances(polygon: Polygon, origin: Point = (0, 0)) -> List[float]:
+    return [math.sqrt((x - origin[0])**2 + (y - origin[1])**2) for x, y in polygon]
+ 
+def agr_origin_nearest(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def min_distance(polygon: Polygon) -> float:
+        return min(polygon_vertex_distances(polygon, (0, 0)))
+    
+    nearest = functools.reduce(lambda a, b: a if min_distance(a) < min_distance(b) else b, polygons)
+    return nearest, min_distance(nearest)
+ 
+def agr_max_side(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def max_side(polygon: Polygon) -> float:
+        return max(polygon_side_lengths(polygon))
+    
+    longest = functools.reduce(lambda a, b: a if max_side(a) > max_side(b) else b, polygons)
+    return longest, max_side(longest)
+ 
+def agr_min_area(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def area(polygon: Polygon) -> float:
+        return polygon_area(polygon)
+    
+    smallest = functools.reduce(lambda a, b: a if area(a) < area(b) else b, polygons)
+    return smallest, area(smallest)
+ 
+def agr_perimeter(polygons: Iterator[Polygon]) -> float:
+    perimeters = map(polygon_perimeter, polygons)
+    return functools.reduce(lambda a, b: a + b, perimeters, 0.0)
+ 
+def agr_area(polygons: Iterator[Polygon]) -> float:
+    areas = map(polygon_area, polygons)
+    return functools.reduce(lambda a, b: a + b, areas, 0.0)
+ 
+def zip_polygons(*iterators: Iterator[Polygon]) -> Iterator[Polygon]:
+    zipped = zip(*iterators)
+    for polygons_tuple in zipped:
+        combined = []
+        for poly in polygons_tuple:
+            combined.extend(poly)
+        yield tuple(combined)
+ 
+def demo_generators():
+    print("=" * 60)
+    print("2. Генерация 7 фигур трех типов")
+    print("=" * 60)
+    
+    rect_gen = gen_rectangle(start_x=0, start_y=0, step_x=2, step_y=0, width=1.2, height=0.8)
+    tri_gen = gen_triangle(start_x=0.5, start_y=2, step_x=1.8, step_y=0, side=1)
+    hex_gen = gen_hexagon(center_x=0, center_y=4, step_x=2.2, step_y=0, radius=0.7)
+    
+    first_rect = list(itertools.islice(rect_gen, 3))
+    first_tri = list(itertools.islice(tri_gen, 2))
+    first_hex = list(itertools.islice(hex_gen, 2))
+    
+    all_polygons = first_rect + first_tri + first_hex
+    visualize_polygons(iter(all_polygons), "7 фигур: прямоугольники, треугольники, шестиугольники", show_labels=True)
+ 
+def demo_transformations():
+    print("=" * 60)
+    print("3-4. Трансформации и их визуализация")
+    print("=" * 60)
+    
+    base_tri = ((0, 0), (1, 0), (0.5, 0.866))
+    
+    transforms = [
+        ("Исходный", lambda p: p),
+        ("Перенос (dx=1.5, dy=0.5)", tr_translate(1.5, 0.5)),
+        ("Поворот на 45°", tr_rotate(45, 0.5, 0.3)),
+        ("Симметрия относительно X", tr_symmetry('x')),
+        ("Гомотетия (k=1.5)", tr_homothety(1.5, 0.5, 0.3)),
+    ]
+    
+    transformed = []
+    labels = []
+    for name, trans in transforms:
+        transformed.append(trans(base_tri))
+        labels.append(name)
+    
+    fig, axes = plt.subplots(1, 5, figsize=(15, 3))
+    for ax, poly, label in zip(axes, transformed, labels):
+        closed = list(poly) + [poly[0]]
+        xs, ys = zip(*closed)
+        ax.fill(xs, ys, alpha=0.5, fc='blue', ec='black')
+        ax.set_title(label, fontsize=9)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    print("\nТри параллельные ленты под острым углом:")
+    rect_gen = gen_rectangle(start_x=0, start_y=0, step_x=1.5, step_y=0.3, width=1, height=0.5)
+    rects = list(itertools.islice(rect_gen, 5))
+    rotated = list(map(tr_rotate(30), rects))
+    visualize_polygons(iter(rotated), "Лента прямоугольников под углом 30°", show_labels=True)
+    
+    print("\nДве пересекающиеся ленты:")
+    ribbon1 = list(itertools.islice(gen_rectangle(0, 2, 1.2, -0.1, 1, 0.4), 5))
+    ribbon2 = list(itertools.islice(gen_rectangle(1, 0, 1.2, 0.2, 1, 0.4), 5))
+    visualize_polygons(iter(ribbon1 + ribbon2), "Пересекающиеся ленты", show_labels=True)
+    
+    print("\nДве параллельные ленты треугольников, симметричных друг другу:")
+    tris = list(itertools.islice(gen_triangle(0, 3, 1.5, 0, 1), 4))
+    sym_tris = list(map(tr_symmetry('y', (2, 0), (2, 1)), tris))
+    visualize_polygons(iter(tris + sym_tris), "Симметричные ленты треугольников", show_labels=True)
+    
+    print("\nЧетырехугольники в разном масштабе, ограниченные двумя прямыми:")
+    quads = []
+    for k in [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0]:
+        quad = ((k, k), (k+0.8, k), (k+0.8, k+0.6), (k, k+0.6))
+        quads.append(quad)
+    visualize_polygons(iter(quads), "Масштабированные четырехугольники", show_labels=True)
+ 
+def demo_filters():
+    print("=" * 60)
+    print("5-6. Фильтры")
+    print("=" * 60)
+    
+    test_polygons = [
+        ((0, 0), (2, 0), (2, 2), (0, 2)),
+        ((0, 0), (2, 0), (1, 1)),
+        ((0, 0), (2, 0), (2, 0.5), (1, 0.8), (0, 0.5)),
+        ((0, 0), (3, 0), (3, 3), (0, 3)),
+        ((0, 0), (1, 0), (0.5, 0.866)),
+    ]
+    
+    convex_filtered = list(filter(flt_convex_polygon, test_polygons))
+    print(f"Выпуклые полигоны: {len(convex_filtered)} из {len(test_polygons)}")
+    
+    small_filtered = list(filter(lambda p: flt_square(p, 5), test_polygons))
+    print(f"Полигоны с площадью < 5: {len(small_filtered)}")
+    
+    print("\nФильтрация фигур из п.4 (ровно 6 фигур):")
+    quads = []
+    for k in [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5]:
+        quad = ((k, k), (k+0.8, k), (k+0.8, k+0.6), (k, k+0.6))
+        quads.append(quad)
+    
+    filtered_quads = list(filter(lambda p: flt_short_side(p, 1.2) and flt_convex_polygon(p), quads))
+    filtered_quads = filtered_quads[:6]
+    visualize_polygons(iter(filtered_quads), "Отфильтровано: 6 фигур с короткой стороной < 1.2", show_labels=True)
+    
+    print(f"\nИз 15 фигур отобрано <=4 с короткой стороной < заданного значения:")
+    many_polygons = []
+    for i in range(15):
+        size = 0.3 + i * 0.15
+        many_polygons.append(((0, 0), (size, 0), (size, size), (0, size)))
+    
+    short_side_filtered = list(filter(lambda p: flt_short_side(p, 1.0), many_polygons))[:4]
+    visualize_polygons(iter(short_side_filtered), f"Отобрано {len(short_side_filtered)} фигур с короткой стороной < 1.0", show_labels=True)
+ 
+def demo_decorators():
+    print("=" * 60)
+    print("7. Декораторы")
+    print("=" * 60)
+    
+    @flt_convex_polygon_decorator
+    def generate_mixed_polygons():
+        polygons = [
+            ((0, 0), (2, 0), (2, 2), (0, 2)),
+            ((0, 0), (2, 0), (1, 1)),
+            ((0, 0), (1, 0), (1, 1), (0.5, 0.5)),
+            ((0, 0), (2, 0), (2, 1)),
+        ]
+        return iter(polygons)
+    
+    convex_only = list(generate_mixed_polygons())
+    print(f"Только выпуклые полигоны: {len(convex_only)}")
+    
+    @flt_square_decorator(max_area=3)
+    def generate_polygons_with_area():
+        polygons = [
+            ((0, 0), (2, 0), (2, 2), (0, 2)),
+            ((0, 0), (1, 0), (1, 1), (0, 1)),
+            ((0, 0), (1.5, 0), (1.5, 1.5), (0, 1.5)),
+            ((0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)),
+        ]
+        return iter(polygons)
+    
+    small_area = list(generate_polygons_with_area())
+    print(f"Полигоны с площадью < 3: {len(small_area)}")
+    
+    @tr_translate_decorator(dx=2, dy=1)
+    @tr_rotate_decorator(45, cx=0, cy=0)
+    def generate_base_triangles():
+        triangles = [
+            ((0, 0), (1, 0), (0.5, 0.866)),
+            ((0, 1), (1, 1), (0.5, 1.866)),
+        ]
+        return iter(triangles)
+    
+    transformed = list(generate_base_triangles())
+    visualize_polygons(iter(transformed), "Треугольники после поворота на 45° и переноса", show_labels=True)
+ 
+def demo_aggregators():
+    print("=" * 60)
+    print("8. Агрегирующие функции (functools.reduce)")
+    print("=" * 60)
+    
+    test_polygons = [
+        ((0, 0), (2, 0), (2, 2), (0, 2)),
+        ((3, 3), (4, 3), (3.5, 4)),
+        ((1, 1), (3, 1), (3, 3), (1, 3)),
+        ((-1, -1), (0, -1), (-0.5, 0)),
+    ]
+    
+    nearest, dist = agr_origin_nearest(iter(test_polygons))
+    print(f"Ближайший к началу координат угол: расстояние {dist:.3f}")
+    
+    longest, side = agr_max_side(iter(test_polygons))
+    print(f"Самая длинная сторона: {side:.3f}")
+    
+    smallest, area = agr_min_area(iter(test_polygons))
+    print(f"Самая маленькая площадь: {area:.3f}")
+    
+    total_perimeter = agr_perimeter(iter(test_polygons))
+    print(f"Суммарный периметр: {total_perimeter:.3f}")
+    
+    total_area = agr_area(iter(test_polygons))
+    print(f"Суммарная площадь: {total_area:.3f}")
+ 
+def demo_zip_polygons():
+    print("=" * 60)
+    print("9. Склейка полигонов (zip_polygons)")
+    print("=" * 60)
+    
+    tri_above = [
+        ((0, 0), (1, 0), (0.5, 0.866)),
+        ((2, 0), (3, 0), (2.5, 0.866)),
+        ((4, 0), (5, 0), (4.5, 0.866)),
+    ]
+    
+    tri_below = [
+        ((0, -2), (1, -2), (0.5, -1.134)),
+        ((2, -2), (3, -2), (2.5, -1.134)),
+        ((4, -2), (5, -2), (4.5, -1.134)),
+    ]
+    
+    zipped = list(zip_polygons(iter(tri_above), iter(tri_below)))
+    print(f"Склеено {len(zipped)} пар полигонов")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    for idx, (ax, poly) in enumerate(zip(axes, zipped)):
+        closed = list(poly) + [poly[0]]
+        xs, ys = zip(*closed)
+        ax.fill(xs, ys, alpha=0.5, fc='green', ec='black')
+        ax.set_title(f"Склеенный полигон {idx+1}")
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    p
+import math
+import itertools
+import functools
+from typing import Iterator, Tuple, List, Callable, Any
+import matplotlib.pyplot as plt
+ 
+Point = Tuple[float, float]
+Polygon = Tuple[Point, ...]
+ 
+def visualize_polygons(polygons: Iterator[Polygon], title: str = "Polygons", 
+                       colors: List = None, figsize: Tuple[int, int] = (12, 8),
+                       show_labels: bool = False):
+    polygons_list = list(polygons)
+    if not polygons_list:
+        print("Нет полигонов для визуализации")
+        return
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_title(title)
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    
+    for i, polygon in enumerate(polygons_list):
+        color = plt.cm.tab10(i % 10)
+        
+        closed_polygon = list(polygon) + [polygon[0]]
+        xs, ys = zip(*closed_polygon)
+        
+        ax.fill(xs, ys, alpha=0.4, fc=color, ec='black', linewidth=1.5)
+        
+        if show_labels:
+            center_x = sum(p[0] for p in polygon) / len(polygon)
+            center_y = sum(p[1] for p in polygon) / len(polygon)
+            ax.text(center_x, center_y, str(i+1), fontsize=10, ha='center', va='center')
+    
+    all_x = [p[0] for poly in polygons_list for p in poly]
+    all_y = [p[1] for poly in polygons_list for p in poly]
+    if all_x and all_y:
+        margin_x = (max(all_x) - min(all_x)) * 0.1 if max(all_x) != min(all_x) else 1
+        margin_y = (max(all_y) - min(all_y)) * 0.1 if max(all_y) != min(all_y) else 1
+        ax.set_xlim(min(all_x) - margin_x, max(all_x) + margin_x)
+        ax.set_ylim(min(all_y) - margin_y, max(all_y) + margin_y)
+    
+    plt.tight_layout()
+    plt.show()
+ 
+def gen_rectangle(start_x: float = 0, start_y: float = 0, 
+                  step_x: float = 2, step_y: float = 0,
+                  width: float = 1, height: float = 1) -> Iterator[Polygon]:
+    x, y = start_x, start_y
+    while True:
+        polygon = ((x, y), (x + width, y), (x + width, y + height), (x, y + height))
+        yield polygon
+        x += step_x
+        y += step_y
+ 
+def gen_triangle(start_x: float = 0, start_y: float = 0,
+                 step_x: float = 1.5, step_y: float = 0.5,
+                 side: float = 1) -> Iterator[Polygon]:
+    x, y = start_x, start_y
+    height = side * math.sqrt(3) / 2
+    while True:
+        polygon = ((x, y), (x + side, y), (x + side/2, y + height))
+        yield polygon
+        x += step_x
+        y += step_y
+ 
+def gen_hexagon(center_x: float = 0, center_y: float = 0,
+                step_x: float = 2.5, step_y: float = 0,
+                radius: float = 1) -> Iterator[Polygon]:
+    x, y = center_x, center_y
+    while True:
+        polygon = []
+        for i in range(6):
+            angle = math.pi / 3 * i
+            px = x + radius * math.cos(angle)
+            py = y + radius * math.sin(angle)
+            polygon.append((px, py))
+        yield tuple(polygon)
+        x += step_x
+        y += step_y
+ 
+def tr_translate(dx: float, dy: float) -> Callable[[Polygon], Polygon]:
+    def translate(polygon: Polygon) -> Polygon:
+        return tuple((x + dx, y + dy) for x, y in polygon)
+    return translate
+ 
+def tr_rotate(angle_deg: float, cx: float = 0, cy: float = 0) -> Callable[[Polygon], Polygon]:
+    angle_rad = math.radians(angle_deg)
+    cos_a, sin_a = math.cos(angle_rad), math.sin(angle_rad)
+    
+    def rotate(polygon: Polygon) -> Polygon:
+        def rotate_point(x: float, y: float) -> Tuple[float, float]:
+            x_rel, y_rel = x - cx, y - cy
+            x_new = x_rel * cos_a - y_rel * sin_a + cx
+            y_new = x_rel * sin_a + y_rel * cos_a + cy
+            return (x_new, y_new)
+        return tuple(rotate_point(x, y) for x, y in polygon)
+    return rotate
+ 
+def tr_symmetry(axis: str = 'x', line_point1: Point = (0, 0), line_point2: Point = (1, 0)) -> Callable[[Polygon], Polygon]:
+    if axis == 'x':
+        def symmetry(polygon: Polygon) -> Polygon:
+            return tuple((x, -y) for x, y in polygon)
+    elif axis == 'y':
+        def symmetry(polygon: Polygon) -> Polygon:
+            return tuple((-x, y) for x, y in polygon)
+    else:
+        x1, y1 = line_point1
+        x2, y2 = line_point2
+        dx, dy = x2 - x1, y2 - y1
+        length_sq = dx*dx + dy*dy
+        
+        def symmetry(polygon: Polygon) -> Polygon:
+            result = []
+            for x, y in polygon:
+                x_rel, y_rel = x - x1, y - y1
+                t = (x_rel*dx + y_rel*dy) / length_sq
+                x_proj = x1 + t*dx
+                y_proj = y1 + t*dy
+                x_sym = 2*x_proj - x
+                y_sym = 2*y_proj - y
+                result.append((x_sym, y_sym))
+            return tuple(result)
+    return symmetry
+ 
+def tr_homothety(k: float, cx: float = 0, cy: float = 0) -> Callable[[Polygon], Polygon]:
+    def homothety(polygon: Polygon) -> Polygon:
+        return tuple((cx + k*(x - cx), cy + k*(y - cy)) for x, y in polygon)
+    return homothety
+ 
+def flt_convex_polygon(polygon: Polygon) -> bool:
+    def cross(o: Point, a: Point, b: Point) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    
+    n = len(polygon)
+    if n < 3:
+        return False
+    
+    prev_sign = 0
+    for i in range(n):
+        o = polygon[i]
+        a = polygon[(i+1) % n]
+        b = polygon[(i+2) % n]
+        cr = cross(o, a, b)
+        sign = 1 if cr > 0 else (-1 if cr < 0 else 0)
+        
+        if sign != 0:
+            if prev_sign != 0 and sign != prev_sign:
+                return False
+            prev_sign = sign
+    return True
+ 
+def flt_angle_point(polygon: Polygon, point: Point, angle_threshold: float = 90) -> bool:
+    for i, p in enumerate(polygon):
+        prev = polygon[i-1]
+        next_p = polygon[(i+1) % len(polygon)]
+        
+        v1 = (prev[0] - p[0], prev[1] - p[1])
+        v2 = (next_p[0] - p[0], next_p[1] - p[1])
+        
+        dot = v1[0]*v2[0] + v1[1]*v2[1]
+        norm1 = math.sqrt(v1[0]**2 + v1[1]**2)
+        norm2 = math.sqrt(v2[0]**2 + v2[1]**2)
+        
+        if norm1 * norm2 == 0:
+            continue
+        
+        cos_angle = dot / (norm1 * norm2)
+        cos_angle = max(-1, min(1, cos_angle))
+        angle_rad = math.acos(cos_angle)
+        angle_deg = math.degrees(angle_rad)
+        
+        if abs(angle_deg - angle_threshold) < 1:
+            return True
+    return False
+ 
+def flt_square(polygon: Polygon, max_area: float) -> bool:
+    n = len(polygon)
+    area = 0
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        area += x1*y2 - x2*y1
+    area = abs(area) / 2
+    return area < max_area
+ 
+def flt_short_side(polygon: Polygon, max_length: float) -> bool:
+    min_side = float('inf')
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        side = math.sqrt((x2-x1)**2 + (y2-y1)**2)
+        min_side = min(min_side, side)
+    return min_side < max_length
+ 
+def flt_point_inside(polygon: Polygon, point: Point) -> bool:
+    x, y = point
+    n = len(polygon)
+    inside = False
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1) + x1):
+            inside = not inside
+    return inside
+ 
+def flt_polygon_angles_inside(polygon: Polygon, target_polygon: Polygon) -> bool:
+    for point in target_polygon:
+        if flt_point_inside(polygon, point):
+            return True
+    return False
+ 
+def flt_convex_polygon_decorator(func: Callable) -> Callable:
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        if isinstance(result, Iterator):
+            return filter(flt_convex_polygon, result)
+        return result
+    return wrapper
+ 
+def flt_square_decorator(max_area: float):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return filter(lambda p: flt_square(p, max_area), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def tr_translate_decorator(dx: float, dy: float):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return map(tr_translate(dx, dy), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def tr_rotate_decorator(angle_deg: float, cx: float = 0, cy: float = 0):
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = func(*args, **kwargs)
+            if isinstance(result, Iterator):
+                return map(tr_rotate(angle_deg, cx, cy), result)
+            return result
+        return wrapper
+    return decorator
+ 
+def polygon_area(polygon: Polygon) -> float:
+    n = len(polygon)
+    area = 0
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        area += x1*y2 - x2*y1
+    return abs(area) / 2
+ 
+def polygon_perimeter(polygon: Polygon) -> float:
+    perimeter = 0
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        perimeter += math.sqrt((x2-x1)**2 + (y2-y1)**2)
+    return perimeter
+ 
+def polygon_side_lengths(polygon: Polygon) -> List[float]:
+    lengths = []
+    n = len(polygon)
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i+1) % n]
+        lengths.append(math.sqrt((x2-x1)**2 + (y2-y1)**2))
+    return lengths
+ 
+def polygon_vertex_distances(polygon: Polygon, origin: Point = (0, 0)) -> List[float]:
+    return [math.sqrt((x - origin[0])**2 + (y - origin[1])**2) for x, y in polygon]
+ 
+def agr_origin_nearest(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def min_distance(polygon: Polygon) -> float:
+        return min(polygon_vertex_distances(polygon, (0, 0)))
+    
+    nearest = functools.reduce(lambda a, b: a if min_distance(a) < min_distance(b) else b, polygons)
+    return nearest, min_distance(nearest)
+ 
+def agr_max_side(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def max_side(polygon: Polygon) -> float:
+        return max(polygon_side_lengths(polygon))
+    
+    longest = functools.reduce(lambda a, b: a if max_side(a) > max_side(b) else b, polygons)
+    return longest, max_side(longest)
+ 
+def agr_min_area(polygons: Iterator[Polygon]) -> Tuple[Polygon, float]:
+    def area(polygon: Polygon) -> float:
+        return polygon_area(polygon)
+    
+    smallest = functools.reduce(lambda a, b: a if area(a) < area(b) else b, polygons)
+    return smallest, area(smallest)
+ 
+def agr_perimeter(polygons: Iterator[Polygon]) -> float:
+    perimeters = map(polygon_perimeter, polygons)
+    return functools.reduce(lambda a, b: a + b, perimeters, 0.0)
+ 
+def agr_area(polygons: Iterator[Polygon]) -> float:
+    areas = map(polygon_area, polygons)
+    return functools.reduce(lambda a, b: a + b, areas, 0.0)
+ 
+def zip_polygons(*iterators: Iterator[Polygon]) -> Iterator[Polygon]:
+    zipped = zip(*iterators)
+    for polygons_tuple in zipped:
+        combined = []
+        for poly in polygons_tuple:
+            combined.extend(poly)
+        yield tuple(combined)
+ 
+def demo_generators():
+    print("=" * 60)
+    print("2. Генерация 7 фигур трех типов")
+    print("=" * 60)
+    
+    rect_gen = gen_rectangle(start_x=0, start_y=0, step_x=2, step_y=0, width=1.2, height=0.8)
+    tri_gen = gen_triangle(start_x=0.5, start_y=2, step_x=1.8, step_y=0, side=1)
+    hex_gen = gen_hexagon(center_x=0, center_y=4, step_x=2.2, step_y=0, radius=0.7)
+    
+    first_rect = list(itertools.islice(rect_gen, 3))
+    first_tri = list(itertools.islice(tri_gen, 2))
+    first_hex = list(itertools.islice(hex_gen, 2))
+    
+    all_polygons = first_rect + first_tri + first_hex
+    visualize_polygons(iter(all_polygons), "7 фигур: прямоугольники, треугольники, шестиугольники", show_labels=True)
+ 
+def demo_transformations():
+    print("=" * 60)
+    print("3-4. Трансформации и их визуализация")
+    print("=" * 60)
+    
+    base_tri = ((0, 0), (1, 0), (0.5, 0.866))
+    
+    transforms = [
+        ("Исходный", lambda p: p),
+        ("Перенос (dx=1.5, dy=0.5)", tr_translate(1.5, 0.5)),
+        ("Поворот на 45°", tr_rotate(45, 0.5, 0.3)),
+        ("Симметрия относительно X", tr_symmetry('x')),
+        ("Гомотетия (k=1.5)", tr_homothety(1.5, 0.5, 0.3)),
+    ]
+    
+    transformed = []
+    labels = []
+    for name, trans in transforms:
+        transformed.append(trans(base_tri))
+        labels.append(name)
+    
+    fig, axes = plt.subplots(1, 5, figsize=(15, 3))
+    for ax, poly, label in zip(axes, transformed, labels):
+        closed = list(poly) + [poly[0]]
+        xs, ys = zip(*closed)
+        ax.fill(xs, ys, alpha=0.5, fc='blue', ec='black')
+        ax.set_title(label, fontsize=9)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+    
+    print("\nТри параллельные ленты под острым углом:")
+    rect_gen = gen_rectangle(start_x=0, start_y=0, step_x=1.5, step_y=0.3, width=1, height=0.5)
+    rects = list(itertools.islice(rect_gen, 5))
+    rotated = list(map(tr_rotate(30), rects))
+    visualize_polygons(iter(rotated), "Лента прямоугольников под углом 30°", show_labels=True)
+    
+    print("\nДве пересекающиеся ленты:")
+    ribbon1 = list(itertools.islice(gen_rectangle(0, 2, 1.2, -0.1, 1, 0.4), 5))
+    ribbon2 = list(itertools.islice(gen_rectangle(1, 0, 1.2, 0.2, 1, 0.4), 5))
+    visualize_polygons(iter(ribbon1 + ribbon2), "Пересекающиеся ленты", show_labels=True)
+    
+    print("\nДве параллельные ленты треугольников, симметричных друг другу:")
+    tris = list(itertools.islice(gen_triangle(0, 3, 1.5, 0, 1), 4))
+    sym_tris = list(map(tr_symmetry('y', (2, 0), (2, 1)), tris))
+    visualize_polygons(iter(tris + sym_tris), "Симметричные ленты треугольников", show_labels=True)
+    
+    print("\nЧетырехугольники в разном масштабе, ограниченные двумя прямыми:")
+    quads = []
+    for k in [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0]:
+        quad = ((k, k), (k+0.8, k), (k+0.8, k+0.6), (k, k+0.6))
+        quads.append(quad)
+    visualize_polygons(iter(quads), "Масштабированные четырехугольники", show_labels=True)
+ 
+def demo_filters():
+    print("=" * 60)
+    print("5-6. Фильтры")
+    print("=" * 60)
+    
+    test_polygons = [
+        ((0, 0), (2, 0), (2, 2), (0, 2)),
+        ((0, 0), (2, 0), (1, 1)),
+        ((0, 0), (2, 0), (2, 0.5), (1, 0.8), (0, 0.5)),
+        ((0, 0), (3, 0), (3, 3), (0, 3)),
+        ((0, 0), (1, 0), (0.5, 0.866)),
+    ]
+    
+    convex_filtered = list(filter(flt_convex_polygon, test_polygons))
+    print(f"Выпуклые полигоны: {len(convex_filtered)} из {len(test_polygons)}")
+    
+    small_filtered = list(filter(lambda p: flt_square(p, 5), test_polygons))
+    print(f"Полигоны с площадью < 5: {len(small_filtered)}")
+    
+    print("\nФильтрация фигур из п.4 (ровно 6 фигур):")
+    quads = []
+    for k in [0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.0, 2.2, 2.5]:
+        quad = ((k, k), (k+0.8, k), (k+0.8, k+0.6), (k, k+0.6))
+        quads.append(quad)
+    
+    filtered_quads = list(filter(lambda p: flt_short_side(p, 1.2) and flt_convex_polygon(p), quads))
+    filtered_quads = filtered_quads[:6]
+    visualize_polygons(iter(filtered_quads), "Отфильтровано: 6 фигур с короткой стороной < 1.2", show_labels=True)
+    
+    print(f"\nИз 15 фигур отобрано <=4 с короткой стороной < заданного значения:")
+    many_polygons = []
+    for i in range(15):
+        size = 0.3 + i * 0.15
+        many_polygons.append(((0, 0), (size, 0), (size, size), (0, size)))
+    
+    short_side_filtered = list(filter(lambda p: flt_short_side(p, 1.0), many_polygons))[:4]
+    visualize_polygons(iter(short_side_filtered), f"Отобрано {len(short_side_filtered)} фигур с короткой стороной < 1.0", show_labels=True)
+ 
+def demo_decorators():
+    print("=" * 60)
+    print("7. Декораторы")
+    print("=" * 60)
+    
+    @flt_convex_polygon_decorator
+    def generate_mixed_polygons():
+        polygons = [
+            ((0, 0), (2, 0), (2, 2), (0, 2)),
+            ((0, 0), (2, 0), (1, 1)),
+            ((0, 0), (1, 0), (1, 1), (0.5, 0.5)),
+            ((0, 0), (2, 0), (2, 1)),
+        ]
+        return iter(polygons)
+    
+    convex_only = list(generate_mixed_polygons())
+    print(f"Только выпуклые полигоны: {len(convex_only)}")
+    
+    @flt_square_decorator(max_area=3)
+    def generate_polygons_with_area():
+        polygons = [
+            ((0, 0), (2, 0), (2, 2), (0, 2)),
+            ((0, 0), (1, 0), (1, 1), (0, 1)),
+            ((0, 0), (1.5, 0), (1.5, 1.5), (0, 1.5)),
+            ((0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5)),
+        ]
+        return iter(polygons)
+    
+    small_area = list(generate_polygons_with_area())
+    print(f"Полигоны с площадью < 3: {len(small_area)}")
+    
+    @tr_translate_decorator(dx=2, dy=1)
+    @tr_rotate_decorator(45, cx=0, cy=0)
+    def generate_base_triangles():
+        triangles = [
+            ((0, 0), (1, 0), (0.5, 0.866)),
+            ((0, 1), (1, 1), (0.5, 1.866)),
+        ]
+        return iter(triangles)
+    
+    transformed = list(generate_base_triangles())
+    visualize_polygons(iter(transformed), "Треугольники после поворота на 45° и переноса", show_labels=True)
+ 
+def demo_aggregators():
+    print("=" * 60)
+    print("8. Агрегирующие функции (functools.reduce)")
+    print("=" * 60)
+    
+    test_polygons = [
+        ((0, 0), (2, 0), (2, 2), (0, 2)),
+        ((3, 3), (4, 3), (3.5, 4)),
+        ((1, 1), (3, 1), (3, 3), (1, 3)),
+        ((-1, -1), (0, -1), (-0.5, 0)),
+    ]
+    
+    nearest, dist = agr_origin_nearest(iter(test_polygons))
+    print(f"Ближайший к началу координат угол: расстояние {dist:.3f}")
+    
+    longest, side = agr_max_side(iter(test_polygons))
+    print(f"Самая длинная сторона: {side:.3f}")
+    
+    smallest, area = agr_min_area(iter(test_polygons))
+    print(f"Самая маленькая площадь: {area:.3f}")
+    
+    total_perimeter = agr_perimeter(iter(test_polygons))
+    print(f"Суммарный периметр: {total_perimeter:.3f}")
+    
+    total_area = agr_area(iter(test_polygons))
+    print(f"Суммарная площадь: {total_area:.3f}")
+ 
+def demo_zip_polygons():
+    print("=" * 60)
+    print("9. Склейка полигонов (zip_polygons)")
+    print("=" * 60)
+    
+    tri_above = [
+        ((0, 0), (1, 0), (0.5, 0.866)),
+        ((2, 0), (3, 0), (2.5, 0.866)),
+        ((4, 0), (5, 0), (4.5, 0.866)),
+    ]
+    
+    tri_below = [
+        ((0, -2), (1, -2), (0.5, -1.134)),
+        ((2, -2), (3, -2), (2.5, -1.134)),
+        ((4, -2), (5, -2), (4.5, -1.134)),
+    ]
+    
+    zipped = list(zip_polygons(iter(tri_above), iter(tri_below)))
+    print(f"Склеено {len(zipped)} пар полигонов")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    for idx, (ax, poly) in enumerate(zip(axes, zipped)):
+        closed = list(poly) + [poly[0]]
+        xs, ys = zip(*closed)
+        ax.fill(xs, ys, alpha=0.5, fc='green', ec='black')
+        ax.set_title(f"Склеенный полигон {idx+1}")
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+ 
+def main():
+    print("\n" + "=" * 60)
+    print("ФУНКЦИОНАЛЬНЫЙ API ДЛЯ РАБОТЫ С ПОЛИГОНАМИ")
+    print("=" * 60 + "\n")
+    
+    demo_generators()
+    demo_transformations()
+    demo_filters()
+    demo_decorators()
+    demo_aggregators()
+    demo_zip_polygons()
+    
+    print("\n" + "=" * 60)
+    print("ВСЕ ТЕСТЫ УСПЕШНО ВЫПОЛНЕНЫ")
+    print("=" * 60)
+ 
+if __name__ == "__main__":
+    main()
+lt.show()
+ 
+def main():
+    print("\n" + "=" * 60)
+    print("ФУНКЦИОНАЛЬНЫЙ API ДЛЯ РАБОТЫ С ПОЛИГОНАМИ")
+    print("=" * 60 + "\n")
+    
+    demo_generators()
+    demo_transformations()
+    demo_filters()
+    demo_decorators()
+    demo_aggregators()
+    demo_zip_polygons()
+    
+    print("\n" + "=" * 60)
+    print("ВСЕ ТЕСТЫ УСПЕШНО ВЫПОЛНЕНЫ")
+    print("=" * 60)
+ 
+if __name__ == "__main__":
+    main()
