@@ -1,0 +1,165 @@
+# Крестики-нолики с выбором размера поля (3x3 или 4x4)
+
+def create_board(size):
+    return [[" " for _ in range(size)] for _ in range(size)]
+
+
+def print_board(board):
+    size = len(board)
+
+    print("\n   " + "   ".join(str(i + 1) for i in range(size)))
+
+    for i in range(size):
+        row = " | ".join(board[i])
+        print(f"{i + 1}  {row}")
+
+        if i < size - 1:
+            print("  " + "---+" * (size - 1) + "---")
+
+    print()
+
+
+def check_winner(board, symbol):
+    size = len(board)
+
+    # Проверка строк
+    for row in board:
+        if all(cell == symbol for cell in row):
+            return True
+
+    # Проверка столбцов
+    for col in range(size):
+        if all(board[row][col] == symbol for row in range(size)):
+            return True
+
+    # Проверка главной диагонали
+    if all(board[i][i] == symbol for i in range(size)):
+        return True
+
+    # Проверка побочной диагонали
+    if all(board[i][size - 1 - i] == symbol for i in range(size)):
+        return True
+
+    return False
+
+
+def check_draw(board):
+    for row in board:
+        if " " in row:
+            return False
+    return True
+
+
+def make_move(board, player):
+    size = len(board)
+
+    while True:
+        move = input(
+            f"Игрок {player}, введите строку и столбец "
+            f"(например: 1 2) или команду 'exit': "
+        ).strip().lower()
+
+        if move == "exit":
+            return "exit"
+
+        parts = move.split()
+
+        if len(parts) != 2:
+            print("Ошибка! Введите два числа.")
+            continue
+
+        if not parts[0].isdigit() or not parts[1].isdigit():
+            print("Ошибка! Нужно вводить только числа.")
+            continue
+
+        row, col = map(int, parts)
+
+        row -= 1
+        col -= 1
+
+        if row < 0 or row >= size or col < 0 or col >= size:
+            print("Ошибка! Координаты вне поля.")
+            continue
+
+        if board[row][col] != " ":
+            print("Ошибка! Клетка уже занята.")
+            continue
+
+        board[row][col] = player
+        return "ok"
+
+
+def choose_size():
+    while True:
+        size = input("Выберите размер поля (3 или 4): ").strip()
+
+        if size not in ["3", "4"]:
+            print("Ошибка! Можно выбрать только 3 или 4.")
+            continue
+
+        return int(size)
+
+
+def play_game():
+    while True:
+        command = input(
+            "\nВведите команду:\n"
+            "start - начать игру\n"
+            "exit - выйти\n"
+            ">>> "
+        ).strip().lower()
+
+        if command == "exit":
+            print("Выход из программы.")
+            break
+
+        if command != "start":
+            print("Неизвестная команда.")
+            continue
+
+        size = choose_size()
+        board = create_board(size)
+
+        current_player = "X"
+
+        while True:
+            print_board(board)
+
+            result = make_move(board, current_player)
+
+            if result == "exit":
+                print("Выход из программы.")
+                return
+
+            if check_winner(board, current_player):
+                print_board(board)
+                print(f"Игрок {current_player} победил!")
+                break
+
+            if check_draw(board):
+                print_board(board)
+                print("Ничья!")
+                break
+
+            current_player = "O" if current_player == "X" else "X"
+
+        while True:
+            restart = input(
+                "\nВведите:\n"
+                "restart - сыграть снова\n"
+                "exit - выйти\n"
+                ">>> "
+            ).strip().lower()
+
+            if restart == "restart":
+                break
+
+            if restart == "exit":
+                print("Выход из программы.")
+                return
+
+            print("Неизвестная команда.")
+
+
+# Запуск программы
+play_game()
